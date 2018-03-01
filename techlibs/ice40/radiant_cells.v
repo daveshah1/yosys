@@ -51,7 +51,7 @@ module BB_OD (input T_N, I, output O, inout B);
 endmodule
 
 // Non-inverting buffer
-module BUF (input A, output Z); assign Z = a; endmodule
+module BUF (input A, output Z); assign Z = A; endmodule
 
 // Dual carry chain
 module CCU2_B(input A0, B0, C0, CIN, A1, B1, C1, output COUT, S0, S1);
@@ -120,3 +120,49 @@ SB_RAM40_4K #(
 	.MASK(MASK), .WDATA(WDATA)
 );
 endmodule 
+
+// Dual full adder
+module FA2(input A0, B0, C0, D0, CI0, A1, B1, C1, D1, CI1, output CO0, CO1, S0, S1);
+parameter INIT0 = "0xc33c";
+parameter INIT1 = "0xc33c";
+
+wire carry;
+
+SB_LUT4 #(.LUT_INIT(INIT0)) lut_0 (.O(S0), .I0(A0), .I1(B0), .I2(C0), .I3(D0));
+SB_CARRY carry_0 (.CO(CO0), .I0(B0), .I1(C0), .CI(CI0));
+
+SB_LUT4 #(.LUT_INIT(INIT1)) lut_1 (.O(S1), .I0(A1), .I1(B1), .I2(C1), .I3(D1));
+SB_CARRY carry_1 (.CO(CO1), .I0(B1), .I1(C1), .CI(CI1));
+
+endmodule
+
+// Positive edge triggered DFF with active high enable and active high async preset
+module FD1P3BZ(input D, CK, SP, PD, output Q); SB_DFFES dff_i(.D(D), .C(CK), .E(SP), .S(PD), .Q(Q)); endmodule
+
+// Positive edge triggered DFF with active high enable and active high async clear
+module FD1P3DZ(input D, CK, SP, CD, output Q); SB_DFFER dff_i(.D(D), .C(CK), .E(SP), .R(CD), .Q(Q)); endmodule
+
+// Positive edge triggered DFF with active high enable and active high sync clear
+module FD1P3IZ(input D, CK, SP, CD, output Q); SB_DFFESR dff_i(.D(D), .C(CK), .E(SP), .R(CD), .Q(Q)); endmodule
+
+// Positive edge triggered DFF with active high enable and active high sync preset
+module FD1P3JZ(input D, CK, SP, PD, output Q); SB_DFFESS dff_i(.D(D), .C(CK), .E(SP), .S(PD), .Q(Q)); endmodule
+
+// Positive edge triggered DFF with active high enable and active high sync/async clear/preset
+module FD1P3XZ(input D, CK, SP, SR, output Q);
+parameter REGSET = "RESET";
+parameter SRMODE = "CE_OVER_LSR";
+
+generate
+if((REGSET == "RESET") && (SRMODE=="CE_OVER_LSR")) begin
+  SB_DFFESR dff_i(.D(D), .C(CK), .E(SP), .R(SR), .Q(Q));
+end else if((REGSET == "SET") && (SRMODE=="CE_OVER_LSR")) begin
+  SB_DFFESS dff_i(.D(D), .C(CK), .E(SP), .S(SR), .Q(Q));
+end else if((REGSET == "RESET") && (SRMODE=="ASYNC")) begin
+  SB_DFFER dff_i(.D(D), .C(CK), .E(SP), .R(SR), .Q(Q));
+end else if((REGSET == "SET") && (SRMODE=="ASYNC")) begin
+  SB_DFFES dff_i(.D(D), .C(CK), .E(SP), .S(SR), .Q(Q));
+end
+endgenerate
+
+endmodule
