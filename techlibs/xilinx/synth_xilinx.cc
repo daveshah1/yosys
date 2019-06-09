@@ -228,7 +228,7 @@ struct SynthXilinxPass : public ScriptPass
 			run("dffsr2dff");
 			run("dff2dffe");
 			run("opt -full");
-
+/*
 			if (!nosrl || help_mode) {
 				// shregmap operates on bit-level flops, not word-level,
 				//   so break those down here
@@ -236,11 +236,11 @@ struct SynthXilinxPass : public ScriptPass
 				// shregmap with '-tech xilinx' infers variable length shift regs
 				run("shregmap -tech xilinx -minlen 3", "(skip if '-nosrl')");
 			}
-
+*/
 			if (!vpr || help_mode)
-				run("techmap -map +/techmap.v -map +/xilinx/arith_map.v");
+				run("techmap -map +/techmap.v");
 			else
-				run("techmap -map +/techmap.v +/xilinx/arith_map.v -D _EXPLICIT_CARRY");
+				run("techmap -map +/techmap.v -D _EXPLICIT_CARRY");
 
 			run("opt -fast");
 		}
@@ -252,9 +252,9 @@ struct SynthXilinxPass : public ScriptPass
 
 		if (check_label("map_luts")) {
 			if (help_mode)
-				run("abc -luts 2:2,3,6:5,10,20 [-dff]");
+				run("abc -luts 2:2,3,6:5 [-dff]");
 			else
-				run("abc -luts 2:2,3,6:5,10,20" + string(retime ? " -dff" : ""));
+				run("abc -luts 2:2,3,6:5" + string(retime ? " -dff" : ""));
 			run("clean");
 			// This shregmap call infers fixed length shift registers after abc
 			//   has performed any necessary retiming
