@@ -182,9 +182,10 @@ struct SynthXilinxPass : public ScriptPass
 				run("read_verilog -lib -D_EXPLICIT_CARRY +/xilinx/cells_sim.v");
 			else
 				run("read_verilog -lib +/xilinx/cells_sim.v");
-
-			run("read_verilog -lib +/xilinx/cells_xtra.v");
-
+			if (arch == "xcup")
+				run("read_verilog -lib +/xilinx/cells_xtra_xcup.v");
+			else
+				run("read_verilog -lib +/xilinx/cells_xtra.v");
 			if (!nobram || help_mode)
 				run("read_verilog -lib +/xilinx/brams_bb.v", "(skip if '-nobram')");
 
@@ -238,7 +239,7 @@ struct SynthXilinxPass : public ScriptPass
 			}
 */
 			if (!vpr || help_mode)
-				run("techmap -map +/techmap.v");
+				run("techmap -map +/techmap.v -map +/xilinx/arith_map.v");
 			else
 				run("techmap -map +/techmap.v -D _EXPLICIT_CARRY");
 
