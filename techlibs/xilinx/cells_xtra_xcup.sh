@@ -1,7 +1,7 @@
 #!/bin/bash
 
 set -e
-libdir="/opt/Xilinx/Vivado/2018.2/data/verilog/src"
+libdir="/opt/Xilinx/Vivado/2019.1/data/verilog/src"
 
 function xtract_cell_decl()
 {
@@ -10,7 +10,7 @@ function xtract_cell_decl()
 		[ -z "$2" ] || echo $2
 		egrep '^\s*((end)?module|parameter|input|inout|output|(end)?function|(end)?task)' $dir/$1.v |
 			sed -re '/UNPLACED/ d; /^\s*function/,/endfunction/ d; /^\s*task/,/endtask/ d;
-			         s,//.*,,; s/#?\(.*/(...);/; s/^(input|output|parameter)/ \1/;
+			         s,//.*,,; s/^\s*module ([A-Z0-9a-z_]+)+.*/module \1 (...);/; s/^(input|output|parameter)/ \1/;
 			         s/\s+$//; s/,$/;/; /input|output|parameter/ s/[^;]$/&;/; s/\s+/ /g;
 				 s/^ ((end)?module)/\1/; s/^ /    /; /module.*_bb/,/endmodule/ d;'
 		echo; return

@@ -100,7 +100,7 @@ module BSCANE2 (...);
     input TDO;
 endmodule
 
-module BUFG_GT
+module BUFG_GT (...);
     output O;
     input CE;
     input CEMASK;
@@ -110,7 +110,7 @@ module BUFG_GT
     input I;
 endmodule
 
-module BUFG_GT_SYNC
+module BUFG_GT_SYNC (...);
     output CESYNC;
     output CLRSYNC;
     input CE;
@@ -118,7 +118,7 @@ module BUFG_GT_SYNC
     input CLR;
 endmodule
 
-module BUFG_PS
+module BUFG_PS (...);
     output O;
     input I;
 endmodule
@@ -134,7 +134,8 @@ endmodule
 
 module BUFGCE_1 (...);
     output O;
-    input CE, I;
+    input CE;
+    input I;
 endmodule
 
 module BUFGCE_DIV (...);
@@ -1147,7 +1148,7 @@ module DNA_PORTE2 (...);
     input SHIFT;
 endmodule
 
-module DSP48E2
+module DSP48E2 (...);
     parameter integer ACASCREG = 1;
     parameter integer ADREG = 1;
     parameter integer ALUMODEREG = 1;
@@ -1373,7 +1374,7 @@ module FIFO36E2 (...);
     input WREN;
 endmodule
 
-module FRAME_ECCE3
+module FRAME_ECCE3 (...);
     output CRCERROR;
     output ECCERRORNOTSINGLE;
     output ECCERRORSINGLE;
@@ -1385,7 +1386,7 @@ module FRAME_ECCE3
     input ICAPTOPCLK;
 endmodule
 
-module FRAME_ECCE4
+module FRAME_ECCE4 (...);
     output CRCERROR;
     output ECCERRORNOTSINGLE;
     output ECCERRORSINGLE;
@@ -5271,7 +5272,7 @@ module HPIO_VREF (...);
     input [6:0] FABRIC_VREF_TUNE;
 endmodule
 
-module IBUF_ANALOG
+module IBUF_ANALOG (...);
     output O;
     input I;
 endmodule
@@ -5933,7 +5934,7 @@ module LDPE (...);
     input D, G, GE, PRE;
 endmodule
 
-module MASTER_JTAG
+module MASTER_JTAG (...);
     output TDO;
     input TCK;
     input TDI;
@@ -8938,7 +8939,7 @@ module PLLE4_ADV (...);
 endmodule
 
 (* keep *)
-module PS8
+module PS8 (...);
     output [7:0] ADMA2PLCACK;
     output [7:0] ADMA2PLTVLD;
     output DPAUDIOREFCLK;
@@ -9982,7 +9983,7 @@ module RAM128X1S (...);
     input A0, A1, A2, A3, A4, A5, A6, D, WCLK, WE;
 endmodule
 
-module RAM256X1D # (...);
+module RAM256X1D (...);
     parameter [255:0] INIT = 256'h0000000000000000000000000000000000000000000000000000000000000000;
     parameter [0:0] IS_WCLK_INVERTED = 1'b0;
     output DPO;
@@ -10026,7 +10027,7 @@ module RAM32M (...);
     input WE;
 endmodule
 
-module RAM32M16 # (...);
+module RAM32M16 (...);
     parameter [63:0] INIT_A = 64'h0000000000000000;
     parameter [63:0] INIT_B = 64'h0000000000000000;
     parameter [63:0] INIT_C = 64'h0000000000000000;
@@ -10086,7 +10087,7 @@ module RAM32X2S (...);
     input A0, A1, A2, A3, A4, D0, D1, WCLK, WE;
 endmodule
 
-module RAM512X1S # (...);
+module RAM512X1S (...);
     parameter [511:0] INIT = 512'h0;
     parameter [0:0] IS_WCLK_INVERTED = 1'b0;
     output O;
@@ -10118,7 +10119,7 @@ module RAM64M (...);
     input WE;
 endmodule
 
-module RAM64M8 # (...);
+module RAM64M8 (...);
     parameter [63:0] INIT_A = 64'h0000000000000000;
     parameter [63:0] INIT_B = 64'h0000000000000000;
     parameter [63:0] INIT_C = 64'h0000000000000000;
@@ -10574,7 +10575,7 @@ module RAMB36E2 (...);
     input [7:0] WEBWE;
 endmodule
 
-module RIU_OR
+module RIU_OR (...);
     parameter SIM_DEVICE = "ULTRASCALE";
     parameter real SIM_VERSION = 2.0;
     output [15:0] RIU_RD_DATA;
