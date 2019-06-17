@@ -260,7 +260,7 @@ struct SynthEcp5Pass : public ScriptPass
 			run("opt_clean");
 			if (!nodffe)
 				run("dff2dffe -direct-match $_DFF_* -direct-match $__DFFS_*");
-			run("techmap -D NO_LUT -map +/ecp5/cells_map.v");
+			run("techmap -D _ABC -D NO_LUT -map +/ecp5/cells_map.v");
 			run("opt_expr -undriven -mux_undef");
 			run("simplemap");
 			run("ecp5_ffinit");
@@ -273,7 +273,9 @@ struct SynthEcp5Pass : public ScriptPass
 			}
 			run("techmap -map +/ecp5/latches_map.v");
 			if (abc9) {
-				run("abc9 -lut +/ecp5/abc_5g.lut -box +/ecp5/abc_5g.box -W 200");
+				run("read_verilog -icells -lib +/ecp5/abc_ff.v");
+				run("write_ilang debug.il");
+				run("abc9 -retime -lut +/ecp5/abc_5g.lut -box +/ecp5/abc_5g.box -W 500");
 			} else {
 				if (nomux)
 					run("abc -lut 4 -dress");
