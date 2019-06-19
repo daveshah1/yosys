@@ -206,7 +206,10 @@ struct SynthXilinxPass : public ScriptPass
 		if (check_label("bram", "(skip if '-nobram')")) {
 			if (!nobram || help_mode) {
 				run("memory_bram -rules +/xilinx/brams.txt");
-				run("techmap -map +/xilinx/brams_map.v");
+				if (arch == "xcup")
+					run("techmap -map +/xilinx/brams_map_xcup.v");
+				else
+					run("techmap -map +/xilinx/brams_map.v");
 			}
 		}
 
