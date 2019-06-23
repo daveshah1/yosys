@@ -25,7 +25,8 @@
 USING_YOSYS_NAMESPACE
 PRIVATE_NAMESPACE_BEGIN
 
-#define XC7_WIRE_DELAY "160"
+#define XC7_WIRE_DELAY "300" // Number with which ABC will map a 6-input gate
+                             // to one LUT6 (instead of a LUT5 + LUT2)
 
 struct SynthXilinxPass : public ScriptPass
 {
@@ -283,10 +284,9 @@ struct SynthXilinxPass : public ScriptPass
 		}
 
 		if (check_label("map_luts")) {
-			if (abc == "abc9") {
-				run("read_verilog -icells -lib +/xilinx/abc_ff.v");
-				run(abc + " -lut +/xilinx/abc_xc7.lut -box +/xilinx/abc_xc7.box -W " + XC7_WIRE_DELAY + string(retime ? " -retime" : ""));
-			}
+			run("opt_expr -mux_undef");
+			if (abc == "abc9")
+				run(abc + " -lut +/xilinx/abc_xc7.lut -box +/xilinx/abc_xc7.box -W " + XC7_WIRE_DELAY + string(retime ? " -dff" : ""));
 			else if (help_mode)
 				run(abc + " -luts 2:2,3,6:5,10,20 [-dff]");
 			else

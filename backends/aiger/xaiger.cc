@@ -79,6 +79,7 @@ struct XAigerWriter
 	dict<SigBit, int> ordered_latches;
 
 	vector<Cell*> box_list;
+	bool omode = false;
 
 	//dict<SigBit, int> init_inputs;
 	//int initstate_ff = 0;
@@ -92,30 +93,37 @@ struct XAigerWriter
 
 	int bit2aig(SigBit bit)
 	{
-		if (aig_map.count(bit) == 0)
-		{
-			aig_map[bit] = -1;
-
-			if (not_map.count(bit)) {
-				int a = bit2aig(not_map.at(bit)) ^ 1;
-				aig_map[bit] = a;
-			} else
-			if (and_map.count(bit)) {
-				auto args = and_map.at(bit);
-				int a0 = bit2aig(args.first);
-				int a1 = bit2aig(args.second);
-				aig_map[bit] = mkgate(a0, a1);
-			} else
-			if (alias_map.count(bit)) {
-				aig_map[bit] = bit2aig(alias_map.at(bit));
-			}
-
-			if (bit == State::Sx || bit == State::Sz)
-				log_error("Design contains 'x' or 'z' bits. Use 'setundef' to replace those constants.\n");
+		auto it = aig_map.find(bit);
+		if (it != aig_map.end()) {
+			log_assert(it->second >= 0);
+			return it->second;
 		}
 
-		log_assert(aig_map.at(bit) >= 0);
-		return aig_map.at(bit);
+		// NB: Cannot use iterator returned from aig_map.insert()
+		//     since this function is called recursively
+
+		int a = -1;
+		if (not_map.count(bit)) {
+			a = bit2aig(not_map.at(bit)) ^ 1;
+		} else
+		if (and_map.count(bit)) {
+			auto args = and_map.at(bit);
+			int a0 = bit2aig(args.first);
+			int a1 = bit2aig(args.second);
+			a = mkgate(a0, a1);
+		} else
+		if (alias_map.count(bit)) {
+			a = bit2aig(alias_map.at(bit));
+		}
+
+		if (bit == State::Sx || bit == State::Sz) {
+			log_debug("Design contains 'x' or 'z' bits. Treating as 1'b0.\n");
+			a = aig_map.at(State::S0);
+		}
+
+		log_assert(a >= 0);
+		aig_map[bit] = a;
+		return a;
 	}
 
 	XAigerWriter(Module *module, bool zinit_mode, bool holes_mode=false) : module(module), zinit_mode(zinit_mode), sigmap(module)
@@ -167,9 +175,13 @@ struct XAigerWriter
 				}
 
 				if (wire->port_output || keep) {
-					if (bit != wirebit)
-						alias_map[wirebit] = bit;
-					output_bits.insert(wirebit);
+					if (bit != RTLIL::Sx) {
+						if (bit != wirebit)
+							alias_map[wirebit] = bit;
+						output_bits.insert(wirebit);
+					}
+					else
+						log_debug("Skipping PO '%s' driven by 1'bx\n", log_signal(wirebit));
 				}
 			}
 		}
@@ -274,7 +286,8 @@ struct XAigerWriter
 					if (c.second.is_fully_const()) continue;
 					auto is_input = cell->input(c.first);
 					auto is_output = cell->output(c.first);
-					log_assert(is_input || is_output);
+					if (!is_input && !is_output)
+						log_error("Connection '%s' on cell '%s' (type '%s') not recognised!\n", log_id(c.first), log_id(cell), log_id(cell->type));
 
 					if (is_input) {
 						for (auto b : c.second.bits()) {
@@ -338,38 +351,46 @@ struct XAigerWriter
 
 				if (box_module->attributes.count("\\abc_carry") && !abc_carry_modules.count(box_module)) {
 					RTLIL::Wire* carry_in = nullptr, *carry_out = nullptr;
-					RTLIL::Wire* last_in = nullptr, *last_out = nullptr;
-					for (const auto &port_name : box_module->ports) {
-						RTLIL::Wire* w = box_module->wire(port_name);
+					auto &ports = box_module->ports;
+					for (auto it = ports.begin(); it != ports.end(); ) {
+						RTLIL::Wire* w = box_module->wire(*it);
 						log_assert(w);
-						if (w->port_input) {
-							if (w->attributes.count("\\abc_carry_in")) {
-								log_assert(!carry_in);
-								carry_in = w;
-							}
-							log_assert(!last_in || last_in->port_id < w->port_id);
-							last_in = w;
+						if (w->port_input && w->attributes.count("\\abc_carry_in")) {
+							if (carry_in)
+								log_error("More than one port with attribute 'abc_carry_in' found in module '%s'\n", log_id(box_module));
+							carry_in = w;
+							it = ports.erase(it);
+							continue;
 						}
-						if (w->port_output) {
-							if (w->attributes.count("\\abc_carry_out")) {
-								log_assert(!carry_out);
-								carry_out = w;
-							}
-							log_assert(!last_out || last_out->port_id < w->port_id);
-							last_out = w;
+						if (w->port_output && w->attributes.count("\\abc_carry_out")) {
+							if (carry_out)
+								log_error("More than one port with attribute 'abc_carry_out' found in module '%s'\n", log_id(box_module));
+							carry_out = w;
+							it = ports.erase(it);
+							continue;
 						}
+						++it;
 					}
 
-					if (carry_in) {
-						log_assert(last_in);
-						std::swap(box_module->ports[carry_in->port_id-1], box_module->ports[last_in->port_id-1]);
-						std::swap(carry_in->port_id, last_in->port_id);
+					if (!carry_in)
+						log_error("Port with attribute 'abc_carry_in' not found in module '%s'\n", log_id(box_module));
+					if (!carry_out)
+						log_error("Port with attribute 'abc_carry_out' not found in module '%s'\n", log_id(box_module));
+
+					for (const auto port_name : ports) {
+						RTLIL::Wire* w = box_module->wire(port_name);
+						log_assert(w);
+						if (w->port_id > carry_in->port_id)
+							--w->port_id;
+						if (w->port_id > carry_out->port_id)
+							--w->port_id;
+						log_assert(w->port_input || w->port_output);
+						log_assert(ports[w->port_id-1] == w->name);
 					}
-					if (carry_out) {
-						log_assert(last_out);
-						std::swap(box_module->ports[carry_out->port_id-1], box_module->ports[last_out->port_id-1]);
-						std::swap(carry_out->port_id, last_out->port_id);
-					}
+					ports.push_back(carry_in->name);
+					carry_in->port_id = ports.size();
+					ports.push_back(carry_out->name);
+					carry_out->port_id = ports.size();
 				}
 
 				// Fully pad all unused input connections of this box cell with S0
@@ -393,10 +414,16 @@ struct XAigerWriter
 						}
 
 						int offset = 0;
-						for (const auto &b : rhs.bits()) {
+						for (auto b : rhs.bits()) {
 							SigBit I = sigmap(b);
-							if (I != b)
-								alias_map[b] = I;
+							if (b == RTLIL::Sx)
+								b = RTLIL::S0;
+							else if (I != b) {
+								if (I == RTLIL::Sx)
+									alias_map[b] = RTLIL::S0;
+								else
+									alias_map[b] = I;
+							}
 							co_bits.emplace_back(b, cell, port_name, offset++, 0);
 							unused_bits.erase(b);
 						}
@@ -437,13 +464,14 @@ struct XAigerWriter
 		}
 
 		for (auto bit : input_bits) {
+			if (!output_bits.count(bit))
+				continue;
 			RTLIL::Wire *wire = bit.wire;
 			// If encountering an inout port, or a keep-ed wire, then create a new wire
 			// with $inout.out suffix, make it a PO driven by the existing inout, and
 			// inherit existing inout's drivers
 			if ((wire->port_input && wire->port_output && !undriven_bits.count(bit))
 					|| wire->attributes.count("\\keep")) {
-				log_assert(input_bits.count(bit) && output_bits.count(bit));
 				RTLIL::IdString wire_name = wire->name.str() + "$inout.out";
 				RTLIL::Wire *new_wire = module->wire(wire_name);
 				if (!new_wire)
@@ -452,12 +480,13 @@ struct XAigerWriter
 				module->connect(new_bit, bit);
 				if (not_map.count(bit))
 					not_map[new_bit] = not_map.at(bit);
-				else if (and_map.count(bit))
-					and_map[new_bit] = and_map.at(bit);
+				else if (and_map.count(bit)) {
+				    //and_map[new_bit] = and_map.at(bit); // Breaks gcc-4.8
+				    and_map.insert(std::make_pair(new_bit, and_map.at(bit)));
+				}
 				else if (alias_map.count(bit))
 					alias_map[new_bit] = alias_map.at(bit);
 				else
-					//log_abort();
 					alias_map[new_bit] = bit;
 				output_bits.erase(bit);
 				output_bits.insert(new_bit);
@@ -586,9 +615,17 @@ struct XAigerWriter
 			aig_outputs.push_back(bit2aig(bit));
 		}
 
+
 		for (auto bit : ff_bits) {
 			aig_o++;
 			aig_outputs.push_back(ff_aig_map.at(bit));
+		}
+
+		if (output_bits.empty()) {
+			aig_o++;
+			aig_outputs.push_back(0);
+			omode = true;
+
 		}
 	}
 
@@ -796,6 +833,8 @@ struct XAigerWriter
 			f.write(buffer_str.data(), buffer_str.size());
 
 			if (holes_module) {
+				log_push();
+
 				// NB: fixup_ports() will sort ports by name
 				//holes_module->fixup_ports();
 				holes_module->check();
@@ -832,6 +871,8 @@ struct XAigerWriter
 				f.write(reinterpret_cast<const char*>(&buffer_size_be), sizeof(buffer_size_be));
 				f.write(buffer_str.data(), buffer_str.size());
 				holes_module->design->remove(holes_module);
+
+				log_pop();
 			}
 		}
 
@@ -915,6 +956,8 @@ struct XAigerWriter
 		for (auto &it : output_lines)
 			f << it.second;
 		log_assert(output_lines.size() == output_bits.size());
+		if (omode && output_bits.empty())
+			f << "output " << output_lines.size() << " 0 $__dummy__\n";
 
 		latch_lines.sort();
 		for (auto &it : latch_lines)
