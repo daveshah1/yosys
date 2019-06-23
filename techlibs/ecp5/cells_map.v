@@ -3,7 +3,7 @@
 `define FF_Q Q
 `define FF_Q_PAST
 `else 
-`define FF_PRE wire Q_next; \$__ABC_FF_ abc_dff (.D(Q_next), .Q(Q)); \$__ABC_TRELLIS_FF
+`define FF_PRE wire Q_next; \$__ABC_FF_ abc_dff (.C(C), .D(Q_next), .Q(Q)); \$__ABC_TRELLIS_FF
 `define FF_Q Q_next
 `define FF_Q_PAST , .Q_past(Q)
 `endif

@@ -24,7 +24,7 @@
 module \$__ABC_FF_ (input C, D, output Q);
 endmodule
 
-(* abc_box_id = 6, lib_whitebox, abc_flop *)
+(* abc_box_id = 6, lib_whitebox, abc_flop = "TRELLIS_FF", abc_flop_q = "Q", abc_flop_d = "DI", abc_flop_past_q = "\\Q_past" *)
 module \$__ABC_TRELLIS_FF (
 
 	(* abc_flop_q *) output Q,
