@@ -198,6 +198,8 @@ struct SynthXilinxPass : public ScriptPass
 				run("flatten");
 			}
 		}
+		run("tribuf -logic");
+		run("deminout");
 
 		if (check_label("coarse")) {
 			run("synth -run coarse");
