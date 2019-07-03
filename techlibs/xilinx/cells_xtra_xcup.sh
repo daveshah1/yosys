@@ -105,6 +105,7 @@ function xtract_cell_decl()
 	# xtract_cell_decl LUT6
 	#xtract_cell_decl LUT6_2
 	xtract_cell_decl MASTER_JTAG
+	xtract_cell_decl MMCME2_ADV
 	xtract_cell_decl MMCME3_ADV
 	xtract_cell_decl MMCME3_BASE
 	xtract_cell_decl MMCME4_ADV
