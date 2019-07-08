@@ -23,7 +23,7 @@ bram $__ECP5_DP16KD
 endbram
 
 match $__ECP5_DP16KD
-  min bits 2048
-  min efficiency 5
+  min bits 1024
+  min efficiency 3
   shuffle_enable B
 endmatch
