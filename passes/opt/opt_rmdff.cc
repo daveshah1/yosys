@@ -17,19 +17,24 @@
  *
  */
 
-#include "kernel/register.h"
-#include "kernel/sigtools.h"
 #include "kernel/log.h"
-#include <stdlib.h>
+#include "kernel/register.h"
+#include "kernel/rtlil.h"
+#include "kernel/satgen.h"
+#include "kernel/sigtools.h"
 #include <stdio.h>
+#include <stdlib.h>
 
 USING_YOSYS_NAMESPACE
 PRIVATE_NAMESPACE_BEGIN
 
 SigMap assign_map, dff_init_map;
 SigSet<RTLIL::Cell*> mux_drivers;
+dict<SigBit, RTLIL::Cell*> bit2driver;
 dict<SigBit, pool<SigBit>> init_attributes;
+
 bool keepdc;
+bool sat;
 
 void remove_init_attr(SigSpec sig)
 {
@@ -58,15 +63,15 @@ bool handle_dffsr(RTLIL::Module *mod, RTLIL::Cell *cell)
 
 	log_assert(GetSize(sig_set) == GetSize(sig_clr));
 
-	if (cell->type.substr(0,8) == "$_DFFSR_") {
+	if (cell->type.begins_with("$_DFFSR_")) {
 		pol_set = cell->type[9] == 'P' ? State::S1 : State::S0;
 		pol_clr = cell->type[10] == 'P' ? State::S1 : State::S0;
 	} else
-	if (cell->type.substr(0,11) == "$_DLATCHSR_") {
+	if (cell->type.begins_with("$_DLATCHSR_")) {
 		pol_set = cell->type[12] == 'P' ? State::S1 : State::S0;
 		pol_clr = cell->type[13] == 'P' ? State::S1 : State::S0;
 	} else
-	if (cell->type == "$dffsr" || cell->type == "$dlatchsr") {
+	if (cell->type.in("$dffsr", "$dlatchsr")) {
 		pol_set = cell->parameters["\\SET_POLARITY"].as_bool() ? State::S1 : State::S0;
 		pol_clr = cell->parameters["\\CLR_POLARITY"].as_bool() ? State::S1 : State::S0;
 	} else
@@ -132,7 +137,7 @@ bool handle_dffsr(RTLIL::Module *mod, RTLIL::Cell *cell)
 		return true;
 	}
 
-	if (cell->type == "$dffsr" || cell->type == "$dlatchsr")
+	if (cell->type.in("$dffsr", "$dlatchsr"))
 	{
 		cell->setParam("\\WIDTH", GetSize(sig_d));
 		cell->setPort("\\SET", sig_set);
@@ -193,9 +198,9 @@ bool handle_dffsr(RTLIL::Module *mod, RTLIL::Cell *cell)
 	{
 		IdString new_type;
 
-		if (cell->type.substr(0,8) == "$_DFFSR_")
+		if (cell->type.begins_with("$_DFFSR_"))
 			new_type = stringf("$_DFF_%c_", cell->type[8]);
-		else if (cell->type.substr(0,11) == "$_DLATCHSR_")
+		else if (cell->type.begins_with("$_DLATCHSR_"))
 			new_type = stringf("$_DLATCH_%c_", cell->type[11]);
 		else
 			log_abort();
@@ -273,7 +278,7 @@ bool handle_dff(RTLIL::Module *mod, RTLIL::Cell *dff)
 		sig_c = dff->getPort("\\C");
 		val_cp = RTLIL::Const(dff->type == "$_DFF_P_", 1);
 	}
-	else if (dff->type.substr(0,6) == "$_DFF_" && dff->type.substr(9) == "_" &&
+	else if (dff->type.begins_with("$_DFF_") && dff->type.compare(9, 1, "_") == 0 &&
 			(dff->type[6] == 'N' || dff->type[6] == 'P') &&
 			(dff->type[7] == 'N' || dff->type[7] == 'P') &&
 			(dff->type[8] == '0' || dff->type[8] == '1')) {
@@ -285,15 +290,15 @@ bool handle_dff(RTLIL::Module *mod, RTLIL::Cell *dff)
 		val_rp = RTLIL::Const(dff->type[7] == 'P', 1);
 		val_rv = RTLIL::Const(dff->type[8] == '1', 1);
 	}
-	else if (dff->type.substr(0,7) == "$_DFFE_" && dff->type.substr(9) == "_" &&
+	else if (dff->type.begins_with("$_DFFE_") && dff->type.compare(9, 1, "_") == 0 &&
 			(dff->type[7] == 'N' || dff->type[7] == 'P') &&
 			(dff->type[8] == 'N' || dff->type[8] == 'P')) {
 		sig_d = dff->getPort("\\D");
 		sig_q = dff->getPort("\\Q");
 		sig_c = dff->getPort("\\C");
 		sig_e = dff->getPort("\\E");
-		val_cp = RTLIL::Const(dff->type[6] == 'P', 1);
-		val_ep = RTLIL::Const(dff->type[7] == 'P', 1);
+		val_cp = RTLIL::Const(dff->type[7] == 'P', 1);
+		val_ep = RTLIL::Const(dff->type[8] == 'P', 1);
 	}
 	else if (dff->type == "$ff") {
 		sig_d = dff->getPort("\\D");
@@ -423,7 +428,7 @@ bool handle_dff(RTLIL::Module *mod, RTLIL::Cell *dff)
 			return true;
 		}
 
-		log_assert(dff->type.substr(0,6) == "$_DFF_");
+		log_assert(dff->type.begins_with("$_DFF_"));
 		dff->type = stringf("$_DFF_%c_", + dff->type[6]);
 		dff->unsetPort("\\R");
 	}
@@ -447,10 +452,77 @@ bool handle_dff(RTLIL::Module *mod, RTLIL::Cell *dff)
 			return true;
 		}
 
-		log_assert(dff->type.substr(0,7) == "$_DFFE_");
+		log_assert(dff->type.begins_with("$_DFFE_"));
 		dff->type = stringf("$_DFF_%c_", + dff->type[7]);
 		dff->unsetPort("\\E");
 	}
+
+	if (sat && has_init && (!sig_r.size() || val_init == val_rv))
+	{
+		bool removed_sigbits = false;
+
+		ezSatPtr ez;
+		SatGen satgen(ez.get(), &assign_map);
+		pool<Cell*> sat_cells;
+
+		std::function<void(Cell*)> sat_import_cell = [&](Cell *c) {
+			if (!sat_cells.insert(c).second)
+				return;
+			if (!satgen.importCell(c))
+				return;
+			for (auto &conn : c->connections()) {
+				if (!c->input(conn.first))
+					continue;
+				for (auto bit : assign_map(conn.second))
+					if (bit2driver.count(bit))
+						sat_import_cell(bit2driver.at(bit));
+			}
+		};
+
+		// For each register bit, try to prove that it cannot change from the initial value. If so, remove it
+		for (int position = 0; position < GetSize(sig_d); position += 1) {
+			RTLIL::SigBit q_sigbit = sig_q[position];
+			RTLIL::SigBit d_sigbit = sig_d[position];
+
+			if ((!q_sigbit.wire) || (!d_sigbit.wire))
+				continue;
+
+			if (!bit2driver.count(d_sigbit))
+				continue;
+
+			sat_import_cell(bit2driver.at(d_sigbit));
+
+			RTLIL::State sigbit_init_val = val_init[position];
+			if (sigbit_init_val != State::S0 && sigbit_init_val != State::S1)
+				continue;
+
+			int init_sat_pi = satgen.importSigSpec(sigbit_init_val).front();
+			int q_sat_pi = satgen.importSigBit(q_sigbit);
+			int d_sat_pi = satgen.importSigBit(d_sigbit);
+
+			// Try to find out whether the register bit can change under some circumstances
+			bool counter_example_found = ez->solve(ez->IFF(q_sat_pi, init_sat_pi), ez->NOT(ez->IFF(d_sat_pi, init_sat_pi)));
+
+			// If the register bit cannot change, we can replace it with a constant
+			if (!counter_example_found)
+			{
+				log("Setting constant %d-bit at position %d on %s (%s) from module %s.\n", sigbit_init_val ? 1 : 0,
+						position, log_id(dff), log_id(dff->type), log_id(mod));
+
+				SigSpec tmp = dff->getPort("\\D");
+				tmp[position] = sigbit_init_val;
+				dff->setPort("\\D", tmp);
+
+				removed_sigbits = true;
+			}
+		}
+
+		if (removed_sigbits) {
+			handle_dff(mod, dff);
+			return true;
+		}
+	}
+
 
 	return false;
 
@@ -458,6 +530,11 @@ delete_dff:
 	log("Removing %s (%s) from module %s.\n", log_id(dff), log_id(dff->type), log_id(mod));
 	remove_init_attr(dff->getPort("\\Q"));
 	mod->remove(dff);
+
+	for (auto &entry : bit2driver)
+		if (entry.second == dff)
+			bit2driver.erase(entry.first);
+
 	return true;
 }
 
@@ -467,10 +544,14 @@ struct OptRmdffPass : public Pass {
 	{
 		//   |---v---|---v---|---v---|---v---|---v---|---v---|---v---|---v---|---v---|---v---|
 		log("\n");
-		log("    opt_rmdff [-keepdc] [selection]\n");
+		log("    opt_rmdff [-keepdc] [-sat] [selection]\n");
 		log("\n");
 		log("This pass identifies flip-flops with constant inputs and replaces them with\n");
 		log("a constant driver.\n");
+		log("\n");
+		log("    -sat\n");
+		log("        additionally invoke SAT solver to detect and remove flip-flops (with \n");
+		log("        non-constant inputs) that can also be replaced with a constant driver\n");
 		log("\n");
 	}
 	void execute(std::vector<std::string> args, RTLIL::Design *design) YS_OVERRIDE
@@ -479,6 +560,7 @@ struct OptRmdffPass : public Pass {
 		log_header(design, "Executing OPT_RMDFF pass (remove dff with constant values).\n");
 
 		keepdc = false;
+		sat = false;
 
 		size_t argidx;
 		for (argidx = 1; argidx < args.size(); argidx++) {
@@ -486,18 +568,22 @@ struct OptRmdffPass : public Pass {
 				keepdc = true;
 				continue;
 			}
+			if (args[argidx] == "-sat") {
+				sat = true;
+				continue;
+			}
 			break;
 		}
 		extra_args(args, argidx, design);
 
-		for (auto module : design->selected_modules())
-		{
+		for (auto module : design->selected_modules()) {
 			pool<SigBit> driven_bits;
 			dict<SigBit, State> init_bits;
 
 			assign_map.set(module);
 			dff_init_map.set(module);
 			mux_drivers.clear();
+			bit2driver.clear();
 			init_attributes.clear();
 
 			for (auto wire : module->wires())
@@ -522,19 +608,23 @@ struct OptRmdffPass : public Pass {
 						driven_bits.insert(bit);
 				}
 			}
-			mux_drivers.clear();
 
 			std::vector<RTLIL::IdString> dff_list;
 			std::vector<RTLIL::IdString> dffsr_list;
 			std::vector<RTLIL::IdString> dlatch_list;
 			for (auto cell : module->cells())
 			{
-				for (auto &conn : cell->connections())
-					if (cell->output(conn.first) || !cell->known())
-						for (auto bit : assign_map(conn.second))
+				for (auto &conn : cell->connections()) {
+					bool is_output = cell->output(conn.first);
+					if (is_output || !cell->known())
+						for (auto bit : assign_map(conn.second)) {
+							if (is_output)
+								bit2driver[bit] = cell;
 							driven_bits.insert(bit);
+						}
+				}
 
-				if (cell->type == "$mux" || cell->type == "$pmux") {
+				if (cell->type.in("$mux", "$pmux")) {
 					if (cell->getPort("\\A").size() == cell->getPort("\\B").size())
 						mux_drivers.insert(assign_map(cell->getPort("\\Y")), cell);
 					continue;
@@ -604,6 +694,7 @@ struct OptRmdffPass : public Pass {
 
 		assign_map.clear();
 		mux_drivers.clear();
+		bit2driver.clear();
 		init_attributes.clear();
 
 		if (total_count || total_initdrv)

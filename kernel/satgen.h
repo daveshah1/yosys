@@ -475,7 +475,7 @@ struct SatGen
 			return true;
 		}
 
-		if (cell->type == "$_MUX_" || cell->type == "$mux")
+		if (cell->type == "$_MUX_" || cell->type == "$mux" || cell->type == "$_NMUX_")
 		{
 			std::vector<int> a = importDefSigSpec(cell->getPort("\\A"), timestep);
 			std::vector<int> b = importDefSigSpec(cell->getPort("\\B"), timestep);
@@ -483,7 +483,10 @@ struct SatGen
 			std::vector<int> y = importDefSigSpec(cell->getPort("\\Y"), timestep);
 
 			std::vector<int> yy = model_undef ? ez->vec_var(y.size()) : y;
-			ez->assume(ez->vec_eq(ez->vec_ite(s.at(0), b, a), yy));
+			if (cell->type == "$_NMUX_")
+				ez->assume(ez->vec_eq(ez->vec_not(ez->vec_ite(s.at(0), b, a)), yy));
+			else
+				ez->assume(ez->vec_eq(ez->vec_ite(s.at(0), b, a), yy));
 
 			if (model_undef)
 			{
@@ -1020,7 +1023,7 @@ struct SatGen
 
 			std::vector<int> lut;
 			for (auto bit : cell->getParam("\\LUT").bits)
-				lut.push_back(bit == RTLIL::S1 ? ez->CONST_TRUE : ez->CONST_FALSE);
+				lut.push_back(bit == State::S1 ? ez->CONST_TRUE : ez->CONST_FALSE);
 			while (GetSize(lut) < (1 << GetSize(a)))
 				lut.push_back(ez->CONST_FALSE);
 			lut.resize(1 << GetSize(a));

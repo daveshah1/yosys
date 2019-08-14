@@ -114,8 +114,8 @@ struct ConstEval
 				bool carry = sig_ci.as_bool();
 
 				for (int i = 0; i < GetSize(coval); i++) {
-					carry = (sig_g[i] == RTLIL::S1) || (sig_p[i] == RTLIL::S1 && carry);
-					coval.bits[i] = carry ? RTLIL::S1 : RTLIL::S0;
+					carry = (sig_g[i] == State::S1) || (sig_p[i] == RTLIL::S1 && carry);
+					coval.bits[i] = carry ? State::S1 : State::S0;
 				}
 
 				set(sig_co, coval);
@@ -145,7 +145,7 @@ struct ConstEval
 		if (cell->hasPort("\\B"))
 			sig_b = cell->getPort("\\B");
 
-		if (cell->type == "$mux" || cell->type == "$pmux" || cell->type == "$_MUX_")
+		if (cell->type.in("$mux", "$pmux", "$_MUX_", "$_NMUX_"))
 		{
 			std::vector<RTLIL::SigSpec> y_candidates;
 			int count_maybe_set_s_bits = 0;
@@ -175,7 +175,10 @@ struct ConstEval
 			for (auto &yc : y_candidates) {
 				if (!eval(yc, undef, cell))
 					return false;
-				y_values.push_back(yc.as_const());
+				if (cell->type == "$_NMUX_")
+					y_values.push_back(RTLIL::const_not(yc.as_const(), Const(), false, false, GetSize(yc)));
+				else
+					y_values.push_back(yc.as_const());
 			}
 
 			if (y_values.size() > 1)
@@ -251,8 +254,8 @@ struct ConstEval
 			sig_a.extend_u0(GetSize(sig_y), signed_a);
 			sig_b.extend_u0(GetSize(sig_y), signed_b);
 
-			bool carry = sig_ci[0] == RTLIL::S1;
-			bool b_inv = sig_bi[0] == RTLIL::S1;
+			bool carry = sig_ci[0] == State::S1;
+			bool b_inv = sig_bi[0] == State::S1;
 
 			for (int i = 0; i < GetSize(sig_y); i++)
 			{
@@ -261,22 +264,22 @@ struct ConstEval
 				if (!x_inputs.is_fully_def()) {
 					set(sig_x[i], RTLIL::Sx);
 				} else {
-					bool bit_a = sig_a[i] == RTLIL::S1;
-					bool bit_b = (sig_b[i] == RTLIL::S1) != b_inv;
+					bool bit_a = sig_a[i] == State::S1;
+					bool bit_b = (sig_b[i] == State::S1) != b_inv;
 					bool bit_x = bit_a != bit_b;
-					set(sig_x[i], bit_x ? RTLIL::S1 : RTLIL::S0);
+					set(sig_x[i], bit_x ? State::S1 : State::S0);
 				}
 
 				if (any_input_undef) {
 					set(sig_y[i], RTLIL::Sx);
 					set(sig_co[i], RTLIL::Sx);
 				} else {
-					bool bit_a = sig_a[i] == RTLIL::S1;
-					bool bit_b = (sig_b[i] == RTLIL::S1) != b_inv;
+					bool bit_a = sig_a[i] == State::S1;
+					bool bit_b = (sig_b[i] == State::S1) != b_inv;
 					bool bit_y = (bit_a != bit_b) != carry;
 					carry = (bit_a && bit_b) || (bit_a && carry) || (bit_b && carry);
-					set(sig_y[i], bit_y ? RTLIL::S1 : RTLIL::S0);
-					set(sig_co[i], carry ? RTLIL::S1 : RTLIL::S0);
+					set(sig_y[i], bit_y ? State::S1 : State::S0);
+					set(sig_co[i], carry ? State::S1 : State::S0);
 				}
 			}
 		}

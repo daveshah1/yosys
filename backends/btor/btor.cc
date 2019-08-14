@@ -17,6 +17,11 @@
  *
  */
 
+// [[CITE]] Btor2 , BtorMC and Boolector 3.0
+// Aina Niemetz, Mathias Preiner, Clifford Wolf, Armin Biere
+// Computer Aided Verification - 30th International Conference, CAV 2018
+// https://cs.stanford.edu/people/niemetz/publication/2018/niemetzpreinerwolfbiere-cav18/
+
 #include "kernel/rtlil.h"
 #include "kernel/register.h"
 #include "kernel/sigtools.h"
@@ -491,7 +496,7 @@ struct BtorWorker
 			goto okay;
 		}
 
-		if (cell->type.in("$mux", "$_MUX_"))
+		if (cell->type.in("$mux", "$_MUX_", "$_NMUX_"))
 		{
 			SigSpec sig_a = sigmap(cell->getPort("\\A"));
 			SigSpec sig_b = sigmap(cell->getPort("\\B"));
@@ -505,6 +510,12 @@ struct BtorWorker
 			int sid = get_bv_sid(GetSize(sig_y));
 			int nid = next_nid++;
 			btorf("%d ite %d %d %d %d\n", nid, sid, nid_s, nid_b, nid_a);
+
+			if (cell->type == "$_NMUX_") {
+				int tmp = nid;
+				nid = next_nid++;
+				btorf("%d not %d %d\n", nid, sid, tmp);
+			}
 
 			add_nid_sig(nid, sig_y);
 			goto okay;
@@ -605,8 +616,8 @@ struct BtorWorker
 			if (initstate_nid < 0)
 			{
 				int sid = get_bv_sid(1);
-				int one_nid = get_sig_nid(Const(1, 1));
-				int zero_nid = get_sig_nid(Const(0, 1));
+				int one_nid = get_sig_nid(State::S1);
+				int zero_nid = get_sig_nid(State::S0);
 				initstate_nid = next_nid++;
 				btorf("%d state %d\n", initstate_nid, sid);
 				btorf("%d init %d %d %d\n", next_nid++, sid, initstate_nid, one_nid);
@@ -875,9 +886,28 @@ struct BtorWorker
 					else
 					{
 						if (bit_cell.count(bit) == 0)
-							log_error("No driver for signal bit %s.\n", log_signal(bit));
-						export_cell(bit_cell.at(bit));
-						log_assert(bit_nid.count(bit));
+						{
+							SigSpec s = bit;
+
+							while (i+GetSize(s) < GetSize(sig) && sig[i+GetSize(s)].wire != nullptr &&
+									bit_cell.count(sig[i+GetSize(s)]) == 0)
+								s.append(sig[i+GetSize(s)]);
+
+							log_warning("No driver for signal %s.\n", log_signal(s));
+
+							int sid = get_bv_sid(GetSize(s));
+							int nid = next_nid++;
+							btorf("%d input %d %s\n", nid, sid);
+							nid_width[nid] = GetSize(s);
+
+							i += GetSize(s)-1;
+							continue;
+						}
+						else
+						{
+							export_cell(bit_cell.at(bit));
+							log_assert(bit_nid.count(bit));
+						}
 					}
 				}
 
