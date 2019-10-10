@@ -475,7 +475,7 @@ module TRELLIS_SLICE(
 	);
 endmodule
 
-(* blackbox *)
+// 18-kbit True Dual Port Block RAM
 module DP16KD(
   input DIA17, DIA16, DIA15, DIA14, DIA13, DIA12, DIA11, DIA10, DIA9, DIA8, DIA7, DIA6, DIA5, DIA4, DIA3, DIA2, DIA1, DIA0,
   input ADA13, ADA12, ADA11, ADA10, ADA9, ADA8, ADA7, ADA6, ADA5, ADA4, ADA3, ADA2, ADA1, ADA0,
@@ -504,6 +504,7 @@ module DP16KD(
 	parameter WRITEMODE_A = "NORMAL";
 	parameter WRITEMODE_B = "NORMAL";
 
+	// Constant muxes; only applicable post-pnr
 	parameter DIA17MUX = "DIA17";
 	parameter DIA16MUX = "DIA16";
 	parameter DIA15MUX = "DIA15";
@@ -689,6 +690,162 @@ module DP16KD(
 	parameter INITVAL_3D = 320'h00000000000000000000000000000000000000000000000000000000000000000000000000000000;
 	parameter INITVAL_3E = 320'h00000000000000000000000000000000000000000000000000000000000000000000000000000000;
 	parameter INITVAL_3F = 320'h00000000000000000000000000000000000000000000000000000000000000000000000000000000;
+
+	reg [17:0] mem[0:1023];
+
+	wire clkai, clkbi;
+
+	localparam [2:0] csda = {CSDECODE_A[23:16] == "1", CSDECODE_A[15:8] == "1", CSDECODE_A[7:0] == "1"};
+	localparam [2:0] csdb = {CSDECODE_B[23:16] == "1", CSDECODE_B[15:8] == "1", CSDECODE_B[7:0] == "1"};
+
+`ifndef SYNTHESIS
+	initial begin
+		if (REGMODE_A != "NOREG")
+			$fatal("DP16KD REGMODE_A must be NOREG");
+		if (REGMODE_B != "NOREG")
+			$fatal("DP16KD REGMODE_B must be NOREG");
+	end
+
+	always @(*) begin
+		if (RSTA || RSTB)
+			$display("WARNING: DP16KD reset not modelled");
+	end
+`endif
+
+	generate
+		if (CLKAMUX == "INV") assign clkai = ~CLKA;
+		else assign clkai = CLKA;
+		if (CLKBMUX == "INV") assign clkbi = ~CLKB;
+		else assign clkbi = CLKB;		
+	endgenerate
+
+	wire csma = {CSA2 === 1'bz ? 1'b0 : CSA2, CSA1 === 1'bz ? 1'b0 : CSA1, CSA0 === 1'bz ? 1'b0 : CSA0} == csda;
+	wire csmb = {CSB2 === 1'bz ? 1'b0 : CSB2, CSB1 === 1'bz ? 1'b0 : CSB1, CSB0 === 1'bz ? 1'b0 : CSB0} == csdb;
+
+	wire [13:0] addr_a = {ADA13, ADA12, ADA11, ADA10, ADA9, ADA8, ADA7, ADA6, ADA5, ADA4, ADA3, ADA2, ADA1, ADA0};
+	wire [13:0] addr_b = {ADB13, ADB12, ADB11, ADB10, ADB9, ADB8, ADB7, ADB6, ADB5, ADB4, ADB3, ADB2, ADB1, ADB0};
+
+	wire [17:0] wdata_a = {DIA17, DIA16, DIA15, DIA14, DIA13, DIA12, DIA11, DIA10, DIA9, DIA8, DIA7, DIA6, DIA5, DIA4, DIA3, DIA2, DIA1, DIA0};
+	wire [17:0] wdata_b = {DIB17, DIB16, DIB15, DIB14, DIB13, DIB12, DIB11, DIB10, DIB9, DIB8, DIB7, DIB6, DIB5, DIB4, DIB3, DIB2, DIB1, DIB0};
+	reg [17:0] rdata_a = 0, rdata_b = 0;	
+
+	assign {DOA17, DOA16, DOA15, DOA14, DOA13, DOA12, DOA11, DOA10, DOA9, DOA8, DOA7, DOA6, DOA5, DOA4, DOA3, DOA2, DOA1, DOA0} = rdata_a;
+	assign {DOB17, DOB16, DOB15, DOB14, DOB13, DOB12, DOB11, DOB10, DOB9, DOB8, DOB7, DOB6, DOB5, DOB4, DOB3, DOB2, DOB1, DOB0} = rdata_b;
+
+	integer i;
+
+
+	wire [3:0] offset_a, offset_b;
+	wire [17:0] mask_a, mask_b;
+
+	generate
+		if (DATA_WIDTH_A == 1) assign offset_a = addr_a[3:0];
+		else if (DATA_WIDTH_A == 2) assign offset_a = {addr_a[3:1], 1'b0};
+		else if (DATA_WIDTH_A == 4) assign offset_a = {addr_a[3:2], 2'b00};
+		else if (DATA_WIDTH_A == 9) assign offset_a = {addr_a[3], 3'b000};
+		else assign offset_a = 4'b0000;
+
+		if (DATA_WIDTH_A == 18) assign mask_a = {{9{addr_a[1]}}, {9{addr_a[0]}}};
+		else assign mask_a = {18{1'b1}};
+
+		if (DATA_WIDTH_B == 1) assign offset_b = addr_b[3:0];
+		else if (DATA_WIDTH_B == 2) assign offset_b = {addr_b[3:1], 1'b0};
+		else if (DATA_WIDTH_B == 4) assign offset_b = {addr_b[3:2], 2'b00};
+		else if (DATA_WIDTH_B == 9) assign offset_b = {addr_b[3], 3'b000};
+		else assign offset_b = 4'b0000;
+
+		if (DATA_WIDTH_B == 18) assign mask_b = {{9{addr_b[1]}}, {9{addr_b[0]}}};
+		else assign mask_b = {18{1'b1}};
+	endgenerate
+
+	generate
+		if (WRITEMODE_A == "NORMAL") begin
+			always @(posedge clkai) begin
+				if (csma && CEA) begin
+					if (WEA) begin
+						for (i = 0; i < DATA_WIDTH_A; i=i+1)
+							if (mask_a[i])
+								mem[addr_a[13:4]][i + offset_a] <= wdata_a[i];
+					end else if (OCEA) begin
+						for (i = 0; i < DATA_WIDTH_A; i=i+1)
+							rdata_a[i] <= mem[addr_a[13:4]][i + offset_a];
+					end
+				end
+			end
+		end else if (WRITEMODE_A == "READBEFOREWRITE") begin
+			always @(posedge clkai) begin
+				if (csma && CEA) begin
+					if (WEA) begin
+						for (i = 0; i < DATA_WIDTH_A; i=i+1)
+							if (mask_a[i])
+								mem[addr_a[13:4]][i + offset_a] <= wdata_a[i];
+					end
+					if (OCEA) begin
+						for (i = 0; i < DATA_WIDTH_A; i=i+1)
+							rdata_a[i] <= mem[addr_a[13:4]][i + offset_a];
+					end
+				end
+			end			
+		end else if (WRITEMODE_A == "WRITETHROUGH") begin
+			always @(posedge clkai) begin
+				if (csma && CEA) begin
+					if (WEA) begin
+						for (i = 0; i < DATA_WIDTH_A; i=i+1)
+							if (mask_a[i])
+								mem[addr_a[13:4]][i + offset_a] <= wdata_a[i];
+					end else if (OCEA) begin
+						for (i = 0; i < DATA_WIDTH_A; i=i+1)
+							rdata_a[i] <= mem[addr_a[13:4]][i + offset_a];
+					end
+				end
+			end
+		end
+	endgenerate
+
+	generate
+		if (WRITEMODE_B == "NORMAL") begin
+			always @(posedge clkbi) begin
+				if (csmb && CEB) begin
+					if (WEB) begin
+						for (i = 0; i < DATA_WIDTH_B; i=i+1)
+							if (mask_b[i])
+								mem[addr_b[13:4]][i + offset_b] <= wdata_b[i];
+					end else if (OCEB) begin
+						for (i = 0; i < DATA_WIDTH_B; i=i+1)
+							rdata_b[i] <= mem[addr_b[13:4]][i + offset_b];
+					end
+				end
+			end
+		end else if (WRITEMODE_B == "READBEFOREWRITE") begin
+			always @(posedge clkbi) begin
+				if (csmb && CEB) begin
+					if (WEB) begin
+						for (i = 0; i < DATA_WIDTH_B; i=i+1)
+							if (mask_b[i])
+								mem[addr_b[13:4]][i + offset_b] <= wdata_b[i];
+					end
+					if (OCEB) begin
+						for (i = 0; i < DATA_WIDTH_B; i=i+1)
+							rdata_b[i] <= mem[addr_b[13:4]][i + offset_b];
+					end
+				end
+			end			
+		end else if (WRITEMODE_B == "WRITETHROUGH") begin
+			always @(posedge clkbi) begin
+				if (csmb && CEB) begin
+					if (WEB) begin
+						for (i = 0; i < DATA_WIDTH_B; i=i+1)
+							if (mask_b[i])
+								mem[addr_b[13:4]][i + offset_a] <= wdata_b[i];
+					end else if (OCEB) begin
+						for (i = 0; i < DATA_WIDTH_B; i=i+1)
+							rdata_b[i] <= mem[addr_b[13:4]][i + offset_b];
+					end
+				end
+			end
+		end
+	endgenerate
+
 endmodule
 
 `ifndef NO_INCLUDES
