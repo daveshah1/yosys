@@ -1,3 +1,4 @@
+`timescale 1ns/1ps
 // ---------------------------------------
 
 module LUT4(input A, B, C, D, output Z);
@@ -847,6 +848,38 @@ module DP16KD(
 	endgenerate
 
 endmodule
+
+// Built in oscillator; configurable from 155MHz to 2.4MHz
+module OSCG(
+	output OSC
+);
+	parameter DIV = 128; // In range 2..128
+
+`ifndef SYNTHESIS
+	initial begin
+		if (DIV < 2 || DIV > 128)
+			$fatal("OSCG DIV must be between 2 and 128");
+	end
+`endif
+
+	localparam real period = (1.6276 * DIV);
+	reg OSC = 0;
+	always #period OSC = (OSC === 1'b0);
+endmodule
+
+// Global buffer with glitchless clock gate
+module DCCA(
+	input CLKI, CE,
+	output CLKO
+);
+	reg ce_lat;
+	always @(*)
+		if (!CLKI)
+			ce_lat = CE;
+	assign CLKO = ce_lat && CLKI;
+endmodule
+
+
 
 `ifndef NO_INCLUDES
 

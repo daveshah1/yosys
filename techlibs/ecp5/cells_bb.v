@@ -149,13 +149,6 @@ module DTR(
 );
 endmodule
 
-(* blackbox *)
-module OSCG(
-	output OSC
-);
-parameter DIV = 128;
-endmodule
-
 (* blackbox *) (* keep *)
 module USRMCLK(
 	input USRMCLKI, USRMCLKTS,
@@ -330,13 +323,6 @@ endmodule
 module ECLKSYNCB(
 	input ECLKI, STOP,
 	output ECLKO
-);
-endmodule
-
-(* blackbox *)
-module DCCA(
-	input CLKI, CE,
-	output CLKO
 );
 endmodule
 
