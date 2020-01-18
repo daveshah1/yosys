@@ -22,6 +22,8 @@
 #include "kernel/modtools.h"
 #include "kernel/consteval.h"
 
+#include <queue>
+
 USING_YOSYS_NAMESPACE
 PRIVATE_NAMESPACE_BEGIN
 
@@ -216,6 +218,7 @@ struct OptLutWorker
 
 			// Box COs are primary outputs and FF inputs
 			pool<SigBit> box_co;
+			pool<SigBit> box_ff_q;
 
 			// Inputs externally driven by a constant
 			dict<SigBit, bool> const_inputs;
@@ -263,6 +266,7 @@ struct OptLutWorker
 						for (auto &bit : dff_input) {
 							if (bit.wire != nullptr && bit.wire->port_output) {
 								box_inputs.insert(bit);
+								box_ff_q.insert(bit);
 								// FF outputs are definitely not a CO!
 								box_co.erase(bit);
 							}
@@ -274,7 +278,15 @@ struct OptLutWorker
 			for (auto c : const_inputs)
 				log("    Input %s is constant %d\n", log_signal(c.first), c.second);
 
-			std::vector<SigBit> input_vec(box_inputs.begin(), box_inputs.end());
+			std::vector<SigBit> input_vec;
+			std::vector<int> ff_input_vec;
+
+			for (auto ci : box_inputs) {
+				if (box_ff_q.count(ci))
+					ff_input_vec.push_back(GetSize(input_vec));
+				input_vec.push_back(ci);
+			}
+
 			if (GetSize(input_vec) > 10) {
 				log("    Box has more than 10 inputs, skipping...\n");
 				continue;
@@ -319,7 +331,7 @@ struct OptLutWorker
 				if (found_undef)
 					continue;
 				// Find "don't care" inputs
-				std::pool<int> dont_care;
+				pool<int> dont_care;
 				for (int i = 0; i < GetSize(input_vec); i++) {
 					bool dc = true;
 					for (int j = 0; j < GetSize(box_table); j++) {
@@ -329,10 +341,73 @@ struct OptLutWorker
 						}
 					}
 					if (dc)
-						dont_care.push_back(i);
+						dont_care.insert(i);
 				}
 				for (auto dc : dont_care)
 					log("    Don't care input: %s\n", log_signal(input_vec.at(dc)));
+				// See what combinations of inputs still result in a live output
+				pool<std::pair<int, int>> live_consts; // mask, value
+				pool<std::pair<int, int>> visited_consts; // mask, value
+				std::queue<std::pair<int, int>> consts_to_visit;
+				consts_to_visit.emplace(0, 0);
+				while (!consts_to_visit.empty()) {
+					auto curr = consts_to_visit.front();
+					consts_to_visit.pop();
+					for (int bit = 0; bit < GetSize(input_vec); bit++) {
+						// Check if this is to be skipped
+						if (dont_care.count(bit))
+							continue;
+						if ((curr.first >> bit) & 1) // already constant
+							continue;
+						for (int value = 0; value < 2; value++) {
+							bool v = value;
+							auto next = curr;
+							next.first |= (1 << bit);
+							if (v)
+								next.second |= (1 << bit);
+							if (visited_consts.count(next))
+								continue;
+							visited_consts.insert(next);
+							// Make sure we are live regardless of FF state
+							pool<int> stuck0_with, stuck1_with;
+							stuck0_with.insert(0);
+							stuck1_with.insert(0);
+							for (int ffs = 0; ffs < (1 << GetSize(box_ff_q)); ffs++) {
+								stuck0_with.insert(ffs);
+								stuck1_with.insert(ffs);
+							}
+
+							for (int eval = 0; eval < (1 << GetSize(input_vec)); eval++) {
+								if ((eval & next.first) != next.second)
+									continue;
+								int ffs = 0;
+								for (int i = 0; i < GetSize(ff_input_vec); i++) {
+									if ((eval >> ff_input_vec.at(i)) & 0x1)
+										ffs |= (1 << i);
+								}
+								if (box_table.at(eval))
+									stuck0_with.erase(ffs);
+								else
+									stuck1_with.erase(ffs);
+								if (stuck0_with.empty() && stuck1_with.empty())
+									break;
+							}
+							if (!stuck0_with.empty() || !stuck1_with.empty())
+								continue;
+							live_consts.insert(next);
+							consts_to_visit.push(next);
+						}
+					}
+				}
+				for (auto lc : live_consts) {
+					log("    Live const combo:");
+					for (int i = 0; i < GetSize(input_vec); i++) {
+						if (!((lc.first >> i) & 1))
+							continue;
+						log(" %s=%d", log_signal(input_vec.at(i)), (lc.second >> i) & 1);
+					}
+					log("\n");
+				}
 			}
 
 
