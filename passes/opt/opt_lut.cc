@@ -402,9 +402,71 @@ struct OptLutWorker
 				for (auto lc : live_consts) {
 					log("    Live const combo:");
 					for (int i = 0; i < GetSize(input_vec); i++) {
-						if (!((lc.first >> i) & 1))
+						if (!((lc.first >> i) & 1)) {
 							continue;
+						}
 						log(" %s=%d", log_signal(input_vec.at(i)), (lc.second >> i) & 1);
+					}
+					log("\n");
+					for (int i = 0; i < GetSize(input_vec); i++) {
+						if ((lc.first >> i) & 1) {
+							continue;
+						}
+						std::vector<bool> new_truth_for_i(1 << GetSize(input_vec), false);
+						for (int eval = 0; eval < (1 << GetSize(input_vec)); eval++) {
+							int new_eval = (eval & ~lc.first) | lc.second;
+							new_eval &= ~(1 << i);
+							bool new_ival = false;
+							if (box_table.at(eval) != box_table.at(new_eval)) {
+								new_eval |= (1 << i);
+								if (box_table.at(eval) == box_table.at(new_eval))
+									new_ival = true;
+							}
+							int i_table_idx = 0;
+							for (int j = 0; j < GetSize(input_vec); j++) {
+								if ((eval >> j) & 0x1)
+									i_table_idx |= (1 << j);
+							}
+							new_truth_for_i.at(i_table_idx) = new_ival;
+						}
+
+						pool<int> reduced_dont_care;
+						for (int k = 0; k < GetSize(input_vec); k++) {
+							bool dc = true;
+							for (int j = 0; j < GetSize(new_truth_for_i); j++) {
+								if (new_truth_for_i.at(j) != new_truth_for_i.at(j ^ (1 << k))) {
+									dc = false;
+									break;
+								}
+							}
+							if (dc)
+								reduced_dont_care.insert(k);
+						}
+
+						if (GetSize(reduced_dont_care) == GetSize(input_vec))
+							continue;
+						log("        New truth table for %s:\n", log_signal(input_vec.at(i)));
+						log("          ");
+						for (int j = GetSize(input_vec)-1; j >= 0; j--)
+							if (!reduced_dont_care.count(j))
+								log("%6s ", log_signal(input_vec.at(j)));
+						log("| %s\n", log_signal(input_vec.at(i)));
+						for (int eval = 0; eval < (1 << GetSize(input_vec)); eval++)
+						{
+							bool skip = false;
+							for (auto dc : reduced_dont_care)
+								if ((eval >> dc) & 0x1) {
+									skip = true;
+									break;
+								}
+							if (skip)
+								continue;
+							log("          ");
+							for (int j = GetSize(input_vec)-1; j >= 0; j--)
+								if (!reduced_dont_care.count(j))
+									log("%6d ", (eval >> j) & 0x1);
+							log("| %d\n", new_truth_for_i.at(eval) ? 1 : 0);
+						}
 					}
 					log("\n");
 				}
