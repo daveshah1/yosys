@@ -208,7 +208,7 @@ module LUT2(input A, B, output Z);
 endmodule
 
 // ---------------------------------------
-
+(* lib_whitebox *)
 module TRELLIS_FF(input CLK, LSR, CE, DI, M, output reg Q);
 	parameter GSR = "ENABLED";
 	parameter [127:0] CEMUX = "1";

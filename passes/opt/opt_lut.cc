@@ -20,6 +20,7 @@
 #include "kernel/yosys.h"
 #include "kernel/sigtools.h"
 #include "kernel/modtools.h"
+#include "kernel/consteval.h"
 
 USING_YOSYS_NAMESPACE
 PRIVATE_NAMESPACE_BEGIN
@@ -27,6 +28,7 @@ PRIVATE_NAMESPACE_BEGIN
 struct OptLutWorker
 {
 	dict<IdString, dict<int, IdString>> &dlogic;
+	bool opt_wb;
 	RTLIL::Module *module;
 	ModIndex index;
 	SigMap sigmap;
@@ -93,8 +95,8 @@ struct OptLutWorker
 		}
 	}
 
-	OptLutWorker(dict<IdString, dict<int, IdString>> &dlogic, RTLIL::Module *module, int limit) :
-		dlogic(dlogic), module(module), index(module), sigmap(module)
+	OptLutWorker(dict<IdString, dict<int, IdString>> &dlogic, RTLIL::Module *module, int limit, bool opt_wb) :
+		dlogic(dlogic), opt_wb(opt_wb), module(module), index(module), sigmap(module)
 	{
 		log("Discovering LUTs.\n");
 		for (auto cell : module->selected_cells())
@@ -192,6 +194,150 @@ struct OptLutWorker
 			}
 		}
 		show_stats_by_arity();
+
+		log("\n");
+		log("Processing boxes.\n");
+
+		pool<IdString> processed_derivations;
+
+		for (auto cell : module->selected_cells())
+		{
+			RTLIL::Module* orig_box_module = module->design->module(cell->type);
+			if (!orig_box_module || !orig_box_module->get_bool_attribute(ID(whitebox)))
+				continue;
+			IdString derived_name = orig_box_module->derive(module->design, cell->parameters);
+			RTLIL::Module* box = module->design->module(derived_name);
+			if (!processed_derivations.count(derived_name)) {
+				Pass::call_on_module(box->design, box, "proc");
+				processed_derivations.insert(derived_name);
+			}
+			log("  Processing box %s: %s\n", log_id(cell), log_id(cell->module));
+			SigMap box_sigmap(box);
+
+			// Box COs are primary outputs and FF inputs
+			pool<SigBit> box_co;
+
+			// Inputs externally driven by a constant
+			dict<SigBit, bool> const_inputs;
+			// Set of non-constant inputs
+			pool<SigBit> box_inputs;
+
+			auto conn = cell->connections();
+
+			for (auto wire : box->wires()) {
+				if (wire->port_output) {
+					for (int i = 0; i < wire->width; i++)
+						box_co.insert(box_sigmap(SigBit(wire, i)));
+				}
+				if (wire->port_input) {
+					for (int i = 0; i < wire->width; i++) {
+						auto pc = conn.find(wire->name);
+						if (pc != conn.end() && (i < pc->second.size())) {
+							if (pc->second[i] == State::S0) {
+								const_inputs[box_sigmap(SigBit(wire, i))] = false;
+								continue;
+							}
+							if (pc->second[i] == State::S1) {
+								const_inputs[box_sigmap(SigBit(wire, i))] = true;
+								continue;
+							}
+						}
+						box_inputs.insert(box_sigmap(SigBit(wire, i)));
+					}
+				}
+			}
+			// Add FF inputs as outputs; and vice versa too
+			for (auto cell : box->cells()) {
+				if (cell->type.in(ID($dff), ID($adff), ID($dffsr))) {
+					log("    Found FF %s in box\n", log_id(cell));
+					for (auto conn : cell->connections()) {
+						if (conn.first == ID(Q))
+							continue;
+						for (auto &bit : conn.second) {
+							box_co.insert(bit);
+						}
+					}
+					// Add FF outputs as CI if they directly drive a PO
+					if (cell->hasPort(ID(Q))) {
+						SigSpec dff_input = box_sigmap(cell->getPort(ID(Q)));
+						for (auto &bit : dff_input) {
+							if (bit.wire != nullptr && bit.wire->port_output) {
+								box_inputs.insert(bit);
+								// FF outputs are definitely not a CO!
+								box_co.erase(bit);
+							}
+						}
+					}
+				}
+			}
+			// Print const inputs for debugging
+			for (auto c : const_inputs)
+				log("    Input %s is constant %d\n", log_signal(c.first), c.second);
+
+			std::vector<SigBit> input_vec(box_inputs.begin(), box_inputs.end());
+			if (GetSize(input_vec) > 10) {
+				log("    Box has more than 10 inputs, skipping...\n");
+				continue;
+			}
+			for (auto co : box_co) {
+				log("    Truth table for CO %s:\n", log_signal(co));
+				log("      ");
+				for (int i = GetSize(input_vec)-1; i >= 0; i--)
+					log("%6s ", log_signal(input_vec.at(i)));
+				log("| %s\n", log_signal(co));
+				ConstEval ce(box);
+				for (auto c : const_inputs)
+					ce.set(c.first, c.second ? State::S1 : State::S0);
+
+				std::vector<bool> box_table((1 << GetSize(input_vec)), false);
+				bool found_undef = false;
+
+				for (int eval = 0; eval < (1 << GetSize(input_vec)); eval++)
+				{
+					log("      ");
+					ce.push();
+					for (int i = GetSize(input_vec)-1; i >= 0; i--) {
+						bool bit = (eval >> i) & 1;
+						log("%6d ", bit);
+						ce.set(input_vec.at(i), bit ? State::S1 : State::S0);
+					}
+					SigSpec result(co);
+					if (ce.eval(result)) {
+						log("| %s\n", log_signal(result));
+						if (result == State::S1)
+							box_table.at(eval) = true;
+						else if (result == State::S0)
+							box_table.at(eval) = false;
+						else
+							found_undef = true;
+					} else {
+						found_undef = true;
+						log("| ?\n");
+					}
+					ce.pop();
+				}
+				if (found_undef)
+					continue;
+				// Find "don't care" inputs
+				std::pool<int> dont_care;
+				for (int i = 0; i < GetSize(input_vec); i++) {
+					bool dc = true;
+					for (int j = 0; j < GetSize(box_table); j++) {
+						if (box_table.at(j) != box_table.at(j ^ (1 << i))) {
+							dc = false;
+							break;
+						}
+					}
+					if (dc)
+						dont_care.push_back(i);
+				}
+				for (auto dc : dont_care)
+					log("    Don't care input: %s\n", log_signal(input_vec.at(dc)));
+			}
+
+
+
+		}
 
 		log("\n");
 		log("Eliminating LUTs.\n");
@@ -537,6 +683,9 @@ struct OptLutPass : public Pass {
 		log("    -limit N\n");
 		log("        only perform the first N combines, then stop. useful for debugging.\n");
 		log("\n");
+		log("    -wb\n");
+		log("        attempt to use whitebox functionality to reduce LUT count.\n");
+		log("\n");
 	}
 	void execute(std::vector<std::string> args, RTLIL::Design *design) YS_OVERRIDE
 	{
@@ -578,7 +727,7 @@ struct OptLutPass : public Pass {
 		int eliminated_count = 0, combined_count = 0;
 		for (auto module : design->selected_modules())
 		{
-			OptLutWorker worker(dlogic, module, limit - eliminated_count - combined_count);
+			OptLutWorker worker(dlogic, module, limit - eliminated_count - combined_count, true);
 			eliminated_count += worker.eliminated_count;
 			combined_count   += worker.combined_count;
 		}
