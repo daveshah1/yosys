@@ -408,72 +408,109 @@ struct OptLutWorker
 						log(" %s=%d", log_signal(input_vec.at(i)), (lc.second >> i) & 1);
 					}
 					log("\n");
+					std::vector<int> input_funcs;
 					for (int i = 0; i < GetSize(input_vec); i++) {
-						if ((lc.first >> i) & 1) {
+						if ((lc.first >> i) & 1)
 							continue;
-						}
-						std::vector<bool> new_truth_for_i(1 << GetSize(input_vec), false);
-						for (int eval = 0; eval < (1 << GetSize(input_vec)); eval++) {
-							int new_eval = (eval & ~lc.first) | lc.second;
-							new_eval &= ~(1 << i);
-							bool new_ival = false;
-							if (box_table.at(eval) != box_table.at(new_eval)) {
-								new_eval |= (1 << i);
-								if (box_table.at(eval) == box_table.at(new_eval))
-									new_ival = true;
+						if (dont_care.count(i))
+							continue;
+						if (box_ff_q.count(input_vec.at(i)))
+							continue;
+						input_funcs.push_back(i);
+					}
+					// Mask, bits,
+					std::vector<std::pair<int, int>> new_truth(1 << GetSize(input_vec));
+					for (int eval = 0; eval < (1 << GetSize(input_vec)); eval++) {
+						int new_eval = (eval & ~lc.first) | lc.second;
+						for (int new_ival = 0; new_ival < (1 << GetSize(input_funcs)); new_ival++) {
+							for (int j = 0; j < GetSize(input_funcs); j++) {
+								new_eval &= ~(1 << input_funcs.at(j));
+								if (new_ival & (1 << j))
+									new_eval |= (1 << input_funcs.at(j));
 							}
-							int i_table_idx = 0;
-							for (int j = 0; j < GetSize(input_vec); j++) {
-								if ((eval >> j) & 0x1)
-									i_table_idx |= (1 << j);
+							if (box_table.at(eval) == box_table.at(new_eval)) {
+								new_truth.at(eval).second = new_ival;
+								new_truth.at(eval).first = (1 << GetSize(input_funcs)) - 1;
+								goto found;
 							}
-							new_truth_for_i.at(i_table_idx) = new_ival;
 						}
-
-						pool<int> reduced_dont_care;
-						for (int k = 0; k < GetSize(input_vec); k++) {
-							bool dc = true;
-							for (int j = 0; j < GetSize(new_truth_for_i); j++) {
-								if (new_truth_for_i.at(j) != new_truth_for_i.at(j ^ (1 << k))) {
-									dc = false;
-									break;
+						if (false) {
+						found:
+							// Find don't care outputs at current operating point
+							for (int j = 0; j < GetSize(input_funcs); j++) {
+								new_truth.at(eval).first &= ~(1 << j);
+								bool is_dc = true;
+								for (int new_ival = 0; new_ival < (1 << GetSize(input_funcs)); new_ival++) {
+									if ((new_ival & new_truth.at(eval).first) != (new_truth.at(eval).second & new_truth.at(eval).first))
+										continue;
+									for (int k = 0; k < GetSize(input_funcs); k++) {
+										new_eval &= ~(1 << input_funcs.at(k));
+										if (new_ival & (1 << k))
+											new_eval |= (1 << input_funcs.at(k));
+									}
+									if (box_table.at(eval) != box_table.at(new_eval)) {
+										is_dc = false;
+										break;
+									}
 								}
+								if (!is_dc)
+									new_truth.at(eval).first |= (1 << j);
 							}
-							if (dc)
-								reduced_dont_care.insert(k);
-						}
-
-						if (GetSize(reduced_dont_care) == GetSize(input_vec))
 							continue;
-						log("        New truth table for %s:\n", log_signal(input_vec.at(i)));
+						}
+						log_assert(false);
+					}
+
+					pool<int> reduced_dont_care;
+					for (int k = 0; k < GetSize(input_vec); k++) {
+						bool dc = true;
+						for (int j = 0; j < GetSize(new_truth); j++) {
+							int mask = new_truth.at(j).first & new_truth.at(j ^ (1 << k)).first;
+							if ((new_truth.at(j).second & mask) != (new_truth.at(j ^ (1 << k)).second & mask)) {
+								dc = false;
+								break;
+							}
+						}
+						if (dc)
+							reduced_dont_care.insert(k);
+					}
+
+					if (GetSize(reduced_dont_care) == GetSize(input_vec))
+						continue;
+					log("        New truth table:\n");
+					log("          ");
+					for (int j = GetSize(input_vec)-1; j >= 0; j--)
+						if (!reduced_dont_care.count(j))
+							log("%6s ", log_signal(input_vec.at(j)));
+					log("|");
+					for (int j = GetSize(input_funcs)-1; j >= 0; j--)
+						log(" %6s", log_signal(input_vec.at(input_funcs.at(j))));
+                    log("\n");
+					for (int eval = 0; eval < (1 << GetSize(input_vec)); eval++)
+					{
+						bool skip = false;
+						for (auto dc : reduced_dont_care)
+							if ((eval >> dc) & 0x1) {
+								skip = true;
+								break;
+							}
+						if (skip)
+							continue;
 						log("          ");
 						for (int j = GetSize(input_vec)-1; j >= 0; j--)
 							if (!reduced_dont_care.count(j))
-								log("%6s ", log_signal(input_vec.at(j)));
-						log("| %s\n", log_signal(input_vec.at(i)));
-						for (int eval = 0; eval < (1 << GetSize(input_vec)); eval++)
-						{
-							bool skip = false;
-							for (auto dc : reduced_dont_care)
-								if ((eval >> dc) & 0x1) {
-									skip = true;
-									break;
-								}
-							if (skip)
-								continue;
-							log("          ");
-							for (int j = GetSize(input_vec)-1; j >= 0; j--)
-								if (!reduced_dont_care.count(j))
-									log("%6d ", (eval >> j) & 0x1);
-							log("| %d\n", new_truth_for_i.at(eval) ? 1 : 0);
-						}
+								log("%6d ", (eval >> j) & 0x1);
+						log("| ");
+						for (int j = GetSize(input_funcs)-1; j >= 0; j--)
+							log(" %6c", ((new_truth.at(eval).first >> j) & 0x1) ?
+								('0' + ((new_truth.at(eval).second >> j) & 0x1)) : 
+								'X'
+							);
+						log("\n");
 					}
 					log("\n");
 				}
 			}
-
-
-
 		}
 
 		log("\n");
